@@ -152,6 +152,11 @@ void ScreenRecoveryUI::draw_background_locked() {
     gr_color(0, 0, 0, 255);
     gr_clear();
 
+    // KiroOS: Suppress recovery stages and text during installation
+    if (currentIcon == INSTALLING_UPDATE) {
+        return;
+    }
+
     if (currentIcon != NONE) {
         if (max_stage != -1) {
             int stage_height = gr_get_height(stageMarkerEmpty);
@@ -177,7 +182,16 @@ void ScreenRecoveryUI::draw_background_locked() {
 // Does not flip pages.
 // Should only be called with updateMutex locked.
 void ScreenRecoveryUI::draw_foreground_locked() {
-    if (currentIcon != NONE) {
+    if (currentIcon == INSTALLING_UPDATE) {
+        gr_color(0, 0, 0, 255);
+        gr_clear();
+        GRSurface* frame = (kiroos_icon != nullptr) ? kiroos_icon : GetCurrentFrame();
+        int frame_width = gr_get_width(frame);
+        int frame_height = gr_get_height(frame);
+        int frame_x = (gr_fb_width() - frame_width) / 2;
+        int frame_y = (gr_fb_height() - frame_height) / 2 - PixelsFromDp(40);
+        gr_blit(frame, 0, 0, frame_width, frame_height, frame_x, frame_y);
+    } else if (currentIcon != NONE) {
         gr_color(0, 0, 0, 255);
         gr_clear();
         GRSurface* frame = GetCurrentFrame();
@@ -193,7 +207,8 @@ void ScreenRecoveryUI::draw_foreground_locked() {
         int height = gr_get_height(progressBarEmpty);
 
         int progress_x = (gr_fb_width() - width)/2;
-        int progress_y = GetProgressBaseline();
+        int progress_y = (currentIcon == INSTALLING_UPDATE) ?
+                ((gr_fb_height() / 2) + PixelsFromDp(60)) : GetProgressBaseline();
 
         // Erase behind the progress bar (in case this was a progress-only update)
         gr_color(0, 0, 0, 255);
@@ -288,7 +303,7 @@ static const char* LONG_PRESS_HELP[] = {
 // Redraw everything on the screen.  Does not flip pages.
 // Should only be called with updateMutex locked.
 void ScreenRecoveryUI::draw_screen_locked() {
-    if (!show_text) {
+    if (!show_text || currentIcon == INSTALLING_UPDATE) {
         draw_background_locked();
         draw_foreground_locked();
     } else {
@@ -486,6 +501,7 @@ void ScreenRecoveryUI::Init() {
     text_top_ = 1;
 
     LoadBitmap("icon_error", &error_icon);
+    LoadBitmap("icon_kiroos", &kiroos_icon);
 
     LoadBitmap("progress_empty", &progressBarEmpty);
     LoadBitmap("progress_fill", &progressBarFill);

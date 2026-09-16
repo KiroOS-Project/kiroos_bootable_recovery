@@ -79,6 +79,7 @@ class ScreenRecoveryUI : public RecoveryUI {
     int layout_;
 
     GRSurface* error_icon;
+    GRSurface* kiroos_icon;
 
     GRSurface* erasing_text;
     GRSurface* error_text;
