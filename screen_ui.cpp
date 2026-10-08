@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -183,14 +184,8 @@ void ScreenRecoveryUI::draw_background_locked() {
 // Should only be called with updateMutex locked.
 void ScreenRecoveryUI::draw_foreground_locked() {
     if (currentIcon == INSTALLING_UPDATE) {
-        gr_color(0, 0, 0, 255);
-        gr_clear();
-        GRSurface* frame = (kiroos_icon != nullptr) ? kiroos_icon : GetCurrentFrame();
-        int frame_width = gr_get_width(frame);
-        int frame_height = gr_get_height(frame);
-        int frame_x = (gr_fb_width() - frame_width) / 2;
-        int frame_y = (gr_fb_height() - frame_height) / 2 - PixelsFromDp(40);
-        gr_blit(frame, 0, 0, frame_width, frame_height, frame_x, frame_y);
+        draw_kiroos_install_screen_locked();
+        return;
     } else if (currentIcon != NONE) {
         gr_color(0, 0, 0, 255);
         gr_clear();
@@ -207,8 +202,7 @@ void ScreenRecoveryUI::draw_foreground_locked() {
         int height = gr_get_height(progressBarEmpty);
 
         int progress_x = (gr_fb_width() - width)/2;
-        int progress_y = (currentIcon == INSTALLING_UPDATE) ?
-                ((gr_fb_height() / 2) + PixelsFromDp(60)) : GetProgressBaseline();
+        int progress_y = GetProgressBaseline();
 
         // Erase behind the progress bar (in case this was a progress-only update)
         gr_color(0, 0, 0, 255);
@@ -238,6 +232,129 @@ void ScreenRecoveryUI::draw_foreground_locked() {
                 }
             }
         }
+    }
+}
+
+// KiroOS: full-screen OTA install screen (black, logo, real progress, status text).
+// The percentage follows the real updater progress reported by install.cpp.
+void ScreenRecoveryUI::draw_kiroos_install_screen_locked() {
+    const int fb_w = gr_fb_width();
+    const int fb_h = gr_fb_height();
+
+    gr_color(0, 0, 0, 255);
+    gr_clear();
+
+    int logo_bottom = fb_h / 2;
+    GRSurface* logo = GetCurrentFrame();
+    if (logo != nullptr) {
+        int logo_w = gr_get_width(logo);
+        int logo_h = gr_get_height(logo);
+        int logo_x = (fb_w - logo_w) / 2;
+        int logo_y = fb_h / 2 - logo_h - PixelsFromDp(24);
+        gr_blit(logo, 0, 0, logo_w, logo_h, logo_x, logo_y);
+        logo_bottom = logo_y + logo_h;
+    }
+
+    float p = 0.0f;
+    if (progressBarType == DETERMINATE) {
+        p = progressScopeStart + progress * progressScopeSize;
+        if (p < 0.0f) p = 0.0f;
+        if (p > 1.0f) p = 1.0f;
+    }
+
+    // The updater reports progress in steps: the bar glides towards the real value
+    // (redrawn every animation frame) instead of jumping.
+    const double t = now();
+    if (p < kiroos_shown_progress || kiroos_progress_time == 0) {
+        kiroos_shown_progress = p;
+    } else {
+        double dt = t - kiroos_progress_time;
+        if (dt > 0.5) dt = 0.5;
+        kiroos_shown_progress += (p - kiroos_shown_progress) * (1.0 - exp(-dt * 5.0));
+        if (p - kiroos_shown_progress < 0.001f) kiroos_shown_progress = p;
+    }
+    kiroos_progress_time = t;
+    const float shown = kiroos_shown_progress;
+    int percent = static_cast<int>(shown * 100.0f + 0.5f);
+
+    // Status text, localized images rendered with Android fonts (see
+    // scripts/recovery_text); English text as a fallback if they are missing.
+    const bool done = percent >= 100;
+    GRSurface* title_img = done ? kiroos_done_title : kiroos_installing_title;
+    GRSurface* subtitle_img = done ? kiroos_done_subtitle : kiroos_installing_subtitle;
+    int text_y = logo_bottom + PixelsFromDp(28);
+    gr_color(255, 255, 255, 255);
+    if (title_img != nullptr && gr_get_height(title_img) > 0) {
+        gr_texticon((fb_w - gr_get_width(title_img)) / 2, text_y, title_img);
+        text_y += gr_get_height(title_img);
+    } else {
+        const char* title = done ? "Update complete" : "Installing KiroOS update";
+        gr_text(gr_sys_font(), (fb_w - char_width_ * strlen(title)) / 2, text_y, title, true);
+        text_y += char_height_;
+    }
+    text_y += PixelsFromDp(6);
+    gr_color(142, 142, 147, 255);
+    if (subtitle_img != nullptr && gr_get_height(subtitle_img) > 0) {
+        gr_texticon((fb_w - gr_get_width(subtitle_img)) / 2, text_y, subtitle_img);
+        text_y += gr_get_height(subtitle_img);
+    } else {
+        const char* subtitle = done ? "Restarting..." : "Do not turn off your device";
+        gr_text(gr_sys_font(), (fb_w - char_width_ * strlen(subtitle)) / 2, text_y, subtitle, false);
+        text_y += char_height_;
+    }
+
+    // Progress bar: slim white pill on a dark track, filled from the right for RTL languages
+    const int bar_w = fb_w * 72 / 100;
+    const int bar_h = PixelsFromDp(6);
+    const int bar_x = (fb_w - bar_w) / 2;
+    const int bar_y = text_y + PixelsFromDp(32);
+    gr_color(38, 38, 38, 255);
+    fill_rounded_bar(bar_x, bar_y, bar_w, bar_h, bar_x, bar_x + bar_w);
+    int fill_w = static_cast<int>(bar_w * shown + 0.5f);
+    if (fill_w > 0) {
+        const int fill_x = rtl_locale ? bar_x + bar_w - fill_w : bar_x;
+        gr_color(255, 255, 255, 255);
+        // Both ends stay round; very small values are clipped instead of squashed.
+        const int pill_x = rtl_locale ? fill_x : bar_x;
+        const int pill_w = rtl_locale ? bar_w - (fill_x - bar_x) : fill_w;
+        fill_rounded_bar(pill_x, bar_y, pill_w < bar_h ? bar_h : pill_w, bar_h,
+                fill_x, fill_x + fill_w);
+    }
+
+    // Percentage under the bar: large white Roboto Light digits (images rendered from the
+    // Android font), the recovery bitmap font only if they are missing.
+    char pct[8];
+    snprintf(pct, sizeof(pct), "%d%%", percent);
+    const int pct_y = bar_y + bar_h + PixelsFromDp(20);
+    gr_color(255, 255, 255, 255);
+    if (kiroos_pct_loaded) {
+        int total_w = 0;
+        for (const char* ch = pct; *ch; ++ch) {
+            total_w += gr_get_width(kiroos_pct_glyphs[*ch == '%' ? 10 : *ch - '0']);
+        }
+        int x = (fb_w - total_w) / 2;
+        for (const char* ch = pct; *ch; ++ch) {
+            GRSurface* g = kiroos_pct_glyphs[*ch == '%' ? 10 : *ch - '0'];
+            gr_texticon(x, pct_y, g);
+            x += gr_get_width(g);
+        }
+    } else {
+        gr_text(gr_sys_font(), (fb_w - char_width_ * strlen(pct)) / 2, pct_y, pct, true);
+    }
+}
+// Fills a pill shaped bar, only between clip_l and clip_r (minui can only fill rectangles).
+void ScreenRecoveryUI::fill_rounded_bar(int x, int y, int w, int h, int clip_l, int clip_r) {
+    const double r = h / 2.0;
+    for (int row = 0; row < h; ++row) {
+        const double dy = row + 0.5 - r;
+        const double half = sqrt(r * r - dy * dy);
+        int inset = static_cast<int>(r - half + 0.5);
+        if (inset * 2 > w) inset = w / 2;
+        int l = x + inset;
+        int rr = x + w - inset;
+        if (l < clip_l) l = clip_l;
+        if (rr > clip_r) rr = clip_r;
+        if (rr > l) gr_fill(l, y + row, rr, y + row + 1);
     }
 }
 
@@ -501,7 +618,23 @@ void ScreenRecoveryUI::Init() {
     text_top_ = 1;
 
     LoadBitmap("icon_error", &error_icon);
-    LoadBitmap("icon_kiroos", &kiroos_icon);
+    LoadLocalizedBitmap("kiroos_installing_title", &kiroos_installing_title);
+    LoadLocalizedBitmap("kiroos_installing_subtitle", &kiroos_installing_subtitle);
+    LoadLocalizedBitmap("kiroos_done_title", &kiroos_done_title);
+    LoadLocalizedBitmap("kiroos_done_subtitle", &kiroos_done_subtitle);
+    kiroos_pct_loaded = true;
+    for (int i = 0; i < 11; ++i) {
+        char name[32];
+        if (i < 10) {
+            snprintf(name, sizeof(name), "kiroos_pct_%d", i);
+        } else {
+            snprintf(name, sizeof(name), "kiroos_pct_percent");
+        }
+        if (res_create_alpha_surface(name, &kiroos_pct_glyphs[i]) < 0) {
+            LOGE("couldn't load bitmap %s\n", name);
+            kiroos_pct_loaded = false;
+        }
+    }
 
     LoadBitmap("progress_empty", &progressBarEmpty);
     LoadBitmap("progress_fill", &progressBarFill);

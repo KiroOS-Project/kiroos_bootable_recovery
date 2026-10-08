@@ -34,6 +34,10 @@ int install_package(const char* root_path, bool* wipe_cache, const char* install
 // otherwise return false.
 bool verify_package(const unsigned char* package_data, size_t package_size);
 
+// KiroOS: asked when a package fails signature verification. Set only while the user
+// installs manually from the menu; nullptr (OTA path) always refuses untrusted packages.
+extern bool (*install_untrusted_prompt)();
+
 // Read meta data file of the package, write its content in the string pointed by meta_data.
 // Return true if succeed, otherwise return false.
 bool read_metadata_from_package(ZipArchive* zip, std::string* meta_data);

@@ -908,6 +908,20 @@ static bool yes_no(Device* device, const char* question1, const char* question2)
     return (chosen_item == 1);
 }
 
+static Device* sUntrustedPromptDevice = nullptr;
+
+static bool prompt_install_untrusted() {
+    // The install screen hides menus: switch back to text mode to ask.
+    ui->SetBackground(RecoveryUI::NONE);
+    ui->ShowText(true);
+    bool yes = yes_no(sUntrustedPromptDevice, "Signature verification failed.",
+                      "  Install untrusted package anyway?");
+    if (yes) {
+        ui->SetBackground(RecoveryUI::INSTALLING_UPDATE);
+    }
+    return yes;
+}
+
 // Return true on success.
 static bool wipe_data(int should_confirm, Device* device, bool force = false) {
     if (should_confirm && !yes_no(device, "Wipe all user data?", "  THIS CAN NOT BE UNDONE!")) {
@@ -1287,6 +1301,9 @@ static int apply_from_storage(Device* device, const std::string& id, bool* wipe_
         struct stat sb;
         stat(FUSE_SIDELOAD_HOST_EXIT_PATHNAME, &sb);
 
+        // KiroOS: the fuse provider only leaves its loop on SIGTERM (it ignores the
+        // "exit" lookup), so without this the install screen hung here forever.
+        kill(child, SIGTERM);
         waitpid(child, &status, 0);
     }
 
@@ -1407,7 +1424,11 @@ prompt_and_wait(Device* device, int status) {
                     break;
 
                 case Device::APPLY_UPDATE:
+                    // Manual install: let the user choose to flash zips not signed with the KiroOS key
+                    sUntrustedPromptDevice = device;
+                    install_untrusted_prompt = prompt_install_untrusted;
                     status = show_apply_update_menu(device);
+                    install_untrusted_prompt = nullptr;
 
                     if (status == INSTALL_SUCCESS && should_wipe_cache) {
                         if (!wipe_cache(false, device)) {

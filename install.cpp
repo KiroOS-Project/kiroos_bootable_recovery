@@ -63,6 +63,8 @@ static constexpr const char* UNCRYPT_STATUS = "/cache/recovery/uncrypt_status";
 // Default allocation of progress bar segments to operations
 static const int VERIFICATION_PROGRESS_TIME = 60;
 static const float VERIFICATION_PROGRESS_FRACTION = 0.25;
+
+bool (*install_untrusted_prompt)() = nullptr;
 static const float DEFAULT_FILES_PROGRESS_FRACTION = 0.4;
 static const float DEFAULT_IMAGE_PROGRESS_FRACTION = 0.1;
 
@@ -523,10 +525,14 @@ really_install_package(const char *path, bool* wipe_cache, bool needs_mount,
 
     // Verify package.
     if (!verify_package(map.addr, map.length)) {
-        log_buffer.push_back(android::base::StringPrintf("error: %d", kZipVerificationFailure));
-        sysReleaseMap(&map);
-        set_perf_mode(false);
-        return INSTALL_CORRUPT;
+        if (install_untrusted_prompt != nullptr && install_untrusted_prompt()) {
+            ui->Print("Installing untrusted package...\n");
+        } else {
+            log_buffer.push_back(android::base::StringPrintf("error: %d", kZipVerificationFailure));
+            sysReleaseMap(&map);
+            set_perf_mode(false);
+            return INSTALL_CORRUPT;
+        }
     }
 
     // Try to open the package.

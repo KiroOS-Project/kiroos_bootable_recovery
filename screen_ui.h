@@ -79,7 +79,18 @@ class ScreenRecoveryUI : public RecoveryUI {
     int layout_;
 
     GRSurface* error_icon;
-    GRSurface* kiroos_icon;
+    GRSurface* kiroos_icon = nullptr;
+    // KiroOS: localized install screen texts (picked by the --locale passed from Android)
+    GRSurface* kiroos_installing_title = nullptr;
+    GRSurface* kiroos_installing_subtitle = nullptr;
+    GRSurface* kiroos_done_title = nullptr;
+    GRSurface* kiroos_done_subtitle = nullptr;
+    // KiroOS: progress shown on screen, easing towards the real value
+    // KiroOS: percentage digits 0-9 and %, rendered with Roboto Light
+    GRSurface* kiroos_pct_glyphs[11] = {};
+    bool kiroos_pct_loaded = false;
+    float kiroos_shown_progress = 0.0f;
+    double kiroos_progress_time = 0;
 
     GRSurface* erasing_text;
     GRSurface* error_text;
@@ -142,6 +153,8 @@ class ScreenRecoveryUI : public RecoveryUI {
 
     virtual void draw_background_locked();
     virtual void draw_foreground_locked();
+    void draw_kiroos_install_screen_locked();
+    void fill_rounded_bar(int x, int y, int w, int h, int clip_l, int clip_r);
     bool rainbow;
     int wrap_count;
     virtual void draw_screen_locked();
